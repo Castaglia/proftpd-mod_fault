@@ -100,6 +100,17 @@ static struct fault_error fault_errors[] = {
   { NULL, -1 }
 };
 
+/* Note that the following FSO operations are deliberately omitted:
+ *
+ *  fstat
+ *  lstat
+ *  open
+ *  stat
+ *
+ * Why?  These operations are fundamental to much of ProFTPD operations,
+ * and injecting errors into these will cause unexpected other issues.
+ * So at the moment, they are omitted.
+ */
 static const char *fault_fsio_operations[] = {
   "chmod",
   "chown",
@@ -111,7 +122,6 @@ static const char *fault_fsio_operations[] = {
   "lchown",
   "lseek",
   "mkdir",
-  "open",
   "opendir",
   "read",
   "readdir",
@@ -197,6 +207,54 @@ static void fault_tab_dump(pr_table_t *tab) {
  * that underlying FSIO module WILL be "core", i.e. the real system call.
  */
 
+static int fault_fsio_chmod(pr_fs_t *fs, const char *path, mode_t mode) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chmod", &xerrno) < 0) {
+    return chmod(path, mode);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: chmod '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_chown(pr_fs_t *fs, const char *path, uid_t uid,
+    gid_t gid) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chown", &xerrno) < 0) {
+    return chown(path, uid, gid);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: chown '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_chroot(pr_fs_t *fs, const char *path) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chroot", &xerrno) < 0) {
+    int res;
+
+    res = chroot(path);
+    if (res >= 0) {
+      /* Note: Ideally this assignment wouldn't be in an FSIO callback... */
+      session.chroot_path = (char *) path;
+    }
+
+    return res;
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: chroot '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
 static int fault_fsio_close(pr_fh_t *fh, int fd) {
   int xerrno = 0;
 
@@ -210,6 +268,97 @@ static int fault_fsio_close(pr_fh_t *fh, int fd) {
   return -1;
 }
 
+static int fault_fsio_closedir(pr_fs_t *fs, void *dirh) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "closedir", &xerrno) < 0) {
+    return closedir((DIR *) dirh);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: closedir, returning %s (%s)",
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_fchmod(pr_fh_t *fh, int fd, mode_t mode) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chmod", &xerrno) < 0) {
+    return fchmod(fd, mode);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: fchmod %d ('%s'), returning %s (%s)",
+    fd, fh->fh_path, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_fchown(pr_fh_t *fh, int fd, uid_t uid, gid_t gid) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chown", &xerrno) < 0) {
+    return fchown(fd, uid, gid);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: fchown %d ('%s'), returning %s (%s)",
+    fd, fh->fh_path, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_futimes(pr_fh_t *fh, int fd, struct timeval *tvs) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "utimes", &xerrno) < 0) {
+#if defined(HAVE_FUTIMES)
+    int res;
+
+    res = futimes(fd, tvs);
+    if (res < 0 &&
+        errno == ENOSYS) {
+      return utimes(fh->fh_path, tvs);
+    }
+
+    return res;
+#else
+    return utimes(fh->fh_path, tvs);
+#endif /* HAVE_FUTIMES */
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: futimes (%d) '%s', returning %s (%s)",
+    fd, fh->fh_path, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_lchown(pr_fs_t *fs, const char *path, uid_t uid,
+    gid_t gid) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "chown", &xerrno) < 0) {
+    return lchown(path, uid, gid);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: lchown '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static off_t fault_fsio_lseek(pr_fh_t *fh, int fd, off_t offset, int whence) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "lseek", &xerrno) < 0) {
+    return lseek(fd, offset, whence);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: lseek %d ('%s'), returning %s (%s)", fd,
+    fh->fh_path, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
 static int fault_fsio_mkdir(pr_fs_t *fs, const char *path, mode_t mode) {
   int xerrno = 0;
 
@@ -218,6 +367,41 @@ static int fault_fsio_mkdir(pr_fs_t *fs, const char *path, mode_t mode) {
   }
 
   pr_trace_msg(trace_channel, 4, "fsio: mkdir '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static void *fault_fsio_opendir(pr_fs_t *fs, const char *path) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "opendir", &xerrno) < 0) {
+    return opendir(path);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: opendir '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return NULL;
+}
+
+static ssize_t fault_fsio_pread(pr_fh_t *fh, int fd, void *buf, size_t bufsz,
+    off_t offset) {
+  int xerrno = 0;
+
+  /* For fault injection purposes, we treat `pread(2)` just like `read(2)`. */
+  if (fault_get_errno(fault_fsio_errtab, "read", &xerrno) < 0) {
+#if defined(HAVE_PREAD)
+    return pread(fd, buf, bufsz, offset);
+#else
+    errno = ENOSYS;
+    return -1;
+#endif /* HAVE_PREAD */
+  }
+
+  pr_trace_msg(trace_channel, 4,
+    "fsio: pread %d ('%s', %lu bytes, %" PR_LU " offset), returning %s (%s)",
+    fd, fh->fh_path, (unsigned long) bufsz, (pr_off_t) offset,
     fault_errno2text(xerrno), strerror(xerrno));
   errno = xerrno;
   return -1;
@@ -245,6 +429,47 @@ static ssize_t fault_fsio_pwrite(pr_fh_t *fh, int fd, const void *buf,
   return -1;
 }
 
+static int fault_fsio_read(pr_fh_t *fh, int fd, char *buf, size_t bufsz) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "read", &xerrno) < 0) {
+    return read(fd, buf, bufsz);
+  }
+
+  pr_trace_msg(trace_channel, 4,
+    "fsio: read %d ('%s', %lu bytes), returning %s (%s)", fd, fh->fh_path,
+    (unsigned long) bufsz, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static struct dirent *fault_fsio_readdir(pr_fs_t *fs, void *dirh) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "readdir", &xerrno) < 0) {
+    return readdir((DIR *) dirh);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: readdir, returning %s (%s)",
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return NULL;
+}
+
+static int fault_fsio_readlink(pr_fs_t *fs, const char *path, char *buf,
+    size_t bufsz) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "readlink", &xerrno) < 0) {
+    return readlink(path, buf, bufsz);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: readlink '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
 static int fault_fsio_rename(pr_fs_t *fs, const char *src_path,
     const char *dst_path) {
   int xerrno = 0;
@@ -255,6 +480,19 @@ static int fault_fsio_rename(pr_fs_t *fs, const char *src_path,
 
   pr_trace_msg(trace_channel, 4, "fsio: rename '%s' to '%s', returning %s (%s)",
     src_path, dst_path, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_rmdir(pr_fs_t *fs, const char *path) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "rmdir", &xerrno) < 0) {
+    return rmdir(path);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: rmdir '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
   errno = xerrno;
   return -1;
 }
@@ -270,6 +508,33 @@ static int fault_fsio_write(pr_fh_t *fh, int fd, const char *buf,
   pr_trace_msg(trace_channel, 4,
     "fsio: write %d ('%s', %lu bytes), returning %s (%s)", fd, fh->fh_path,
     (unsigned long) bufsz, fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_unlink(pr_fs_t *fs, const char *path) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "unlink", &xerrno) < 0) {
+    return unlink(path);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: unlink '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
+  errno = xerrno;
+  return -1;
+}
+
+static int fault_fsio_utimes(pr_fs_t *fs, const char *path,
+    struct timeval *tvs) {
+  int xerrno = 0;
+
+  if (fault_get_errno(fault_fsio_errtab, "utimes", &xerrno) < 0) {
+    return utimes(path, tvs);
+  }
+
+  pr_trace_msg(trace_channel, 4, "fsio: utimes '%s', returning %s (%s)", path,
+    fault_errno2text(xerrno), strerror(xerrno));
   errno = xerrno;
   return -1;
 }
@@ -434,11 +699,28 @@ static int fault_sess_init(void) {
     /* Register our custom filesystem. */
     fs = pr_register_fs(session.pool, "fault", "/");
     if (fs != NULL) {
+      fs->chmod = fault_fsio_chmod;
+      fs->chown = fault_fsio_chown;
+      fs->chroot = fault_fsio_chroot;
       fs->close = fault_fsio_close;
+      fs->closedir = fault_fsio_closedir;
+      fs->fchmod = fault_fsio_fchmod;
+      fs->fchown = fault_fsio_fchown;
+      fs->futimes = fault_fsio_futimes;
+      fs->lchown = fault_fsio_lchown;
+      fs->lseek = fault_fsio_lseek;
       fs->mkdir = fault_fsio_mkdir;
+      fs->opendir = fault_fsio_opendir;
+      fs->pread = fault_fsio_pread;
       fs->pwrite = fault_fsio_pwrite;
+      fs->read = fault_fsio_read;
+      fs->readdir = fault_fsio_readdir;
+      fs->readlink = fault_fsio_readlink;
       fs->rename = fault_fsio_rename;
+      fs->rmdir = fault_fsio_rmdir;
       fs->write = fault_fsio_write;
+      fs->unlink = fault_fsio_unlink;
+      fs->utimes = fault_fsio_utimes;
     }
   }
 
