@@ -365,10 +365,14 @@ static void fault_mod_unload_ev(const void *event_data, void *user_data) {
 #endif /* PR_SHARED_MODULE */
 
 static void fault_restart_ev(const void *event_data, void *user_data) {
-  destroy_pool(fault_pool);
-  fault_pool = NULL;
-  fault_fsio_errtab = NULL;
-  fault_engine = FALSE;
+  if (fault_pool != NULL) {
+    destroy_pool(fault_pool);
+  }
+
+  fault_pool = make_sub_pool(permanent_pool);
+  pr_pool_tag(fault_pool, MOD_FAULT_VERSION);
+
+  fault_fsio_errtab = pr_table_alloc(fault_pool, 0);
 }
 
 /* Initialization functions
