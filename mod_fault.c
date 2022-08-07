@@ -42,101 +42,110 @@ static int fault_engine = FALSE;
 static pool *fault_pool = NULL;
 static pr_table_t *fault_fsio_errtab = NULL;
 
+struct fault_error {
+  const char *error_name;
+  int error_code;
+};
+
+static struct fault_error fault_errors[] = {
+  { "EACCES",	EACCES },
+  { "EAGAIN",	EAGAIN },
+  { "EBADF",	EBADF },
+#if defined(EBUSY)
+  { "EBUSY",	EBUSY },
+#endif /* EBUSY */
+#if defined(EDQUOT)
+  { "EDQUOT",	EDQUOT },
+#endif /* EDQUOT */
+  { "EEXIST",	EEXIST },
+#if defined(EFBIG)
+  { "EFBIG",	EFBIG },
+#endif /* EFBIG */
+  { "EIO",	EIO },
+  { "EINTR",	EINTR },
+#if defined(EMFILE)
+  { "EMFILE",	EMFILE },
+#endif /* EMFILE */
+#if defined(ENFILE)
+#if defined(EMLINK)
+  { "EMLINK",	EMLINK },
+#endif /* EMLINK */
+  { "ENFILE",	ENFILE },
+#endif /* ENFILE */
+#if defined(ENODEV)
+  { "ENODEV",	ENODEV },
+#endif /* ENODEV */
+  { "ENOENT",	ENOENT },
+  { "ENOMEM",	ENOMEM },
+  { "ENOSPC",	ENOSPC },
+#if defined(ENOTEMPTY)
+  { "ENOTEMPTY", ENOTEMPTY },
+#endif /* ENOTEMPTY */
+#if defined(ENXIO)
+  { "ENXIO",	ENXIO },
+#endif /* ENXIO */
+#if defined(EOPNOTSUPP)
+  { "EOPNOTSUPP", EOPNOTSUPP },
+#endif /* EOPNOTSUPP */
+  { "EPERM",	EPERM },
+#if defined(EROFS)
+  { "EROFS",	EROFS },
+#endif /* EROFS */
+#if defined(ESTALE)
+  { "ESTALE",	ESTALE },
+#endif /* ESTALE */
+#if defined(ETXTBUSY)
+  { "ETXTBUSY",	ETXTBUSY },
+#endif /* ETXTBUSY */
+  { NULL, -1 }
+};
+
 static const char *fault_fsio_operations[] = {
   "chmod",
   "chown",
   "chroot",
   "close",
   "closedir",
+  "fchmod",
+  "fchown",
+  "lchown",
+  "lseek",
   "mkdir",
   "open",
   "opendir",
   "read",
   "readdir",
+  "readlink",
   "rename",
   "rmdir",
   "write",
   "unlink",
+  "utimes",
   NULL
 };
 
 static const char *trace_channel = "fault";
 
 static const char *fault_errno2text(int xerrno) {
-  const char *text = NULL;
+  register unsigned int i;
 
-  switch (xerrno) {
-    case EACCES:
-      text = "EACCES";
-      break;
-
-    case EAGAIN:
-      text = "EAGAIN";
-      break;
-
-    case EBADF:
-      text = "EBADF";
-      break;
-
-#if defined(EBUSY)
-    case EBUSY:
-      text = "EBUSY";
-      break;
-#endif /* EBUSY */
-
-#if defined(EDQUOT)
-    case EDQUOT:
-      text = "EDQUOT";
-      break;
-#endif /* EDQUOT */
-
-    case EEXIST:
-      text = "ENOSPC";
-      break;
-
-    case ENOSPC:
-      text = "ENOSPC";
-      break;
-
-    default:
-      errno = ENOENT;
-      text = NULL;
+  for (i = 0; fault_errors[i].error_name != NULL; i++) {
+    if (xerrno == fault_errors[i].error_code) {
+      return fault_errors[i].error_name;
+    }
   }
 
-  return text;
+  errno = ENOENT;
+  return NULL;
 }
 
 static int fault_text2errno(const char *text) {
-  if (strcasecmp(text, "EACCES") == 0) {
-    return EACCES;
-  }
+  register unsigned int i;
 
-  if (strcasecmp(text, "EAGAIN") == 0) {
-    return EAGAIN;
-  }
-
-  if (strcasecmp(text, "EBADF") == 0) {
-    return EBADF;
-  }
-
-#if defined(EBUSY)
-  if (strcasecmp(text, "EBUSY") == 0) {
-    return EBUSY;
-  }
-#endif /* EBUSY */
-
-#if defined(EDQUOT)
-  if (strcasecmp(text, "EDQUOT") == 0) {
-    return EDQUOT;
-  }
-#endif /* EDQUOT */
-
-  if (strcasecmp(text, "EEXIST") == 0) {
-    return EEXIST;
-  }
-
-  if (strcasecmp(text, "ENOSPC") == 0) {
-    return ENOSPC;
+  for (i = 0; fault_errors[i].error_name != NULL; i++) {
+    if (strcasecmp(text, fault_errors[i].error_name) == 0) {
+      return fault_errors[i].error_code;
+    }
   }
 
   return -1;
